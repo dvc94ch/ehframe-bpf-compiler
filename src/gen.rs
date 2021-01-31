@@ -27,15 +27,14 @@ typedef unwind_context_t (*_fde_func_with_deref_t)(
     uintptr_t,
     deref_func_t);
 
-unwind_context_t _eh_elf(unwind_context_t ctx, uintptr_t pc, deref_func_t deref) {
-    unwind_context_t out_ctx;
+void _eh_elf(unwind_context_t ctx, unwind_context_t *out_ctx, uintptr_t pc, deref_func_t deref) {
     switch(pc) {
 "#;
 
 const POST: &str = r#"
         default:
-            out_ctx.flags = 7; // UNWF_ERROR
-            return out_ctx;
+            out_ctx->flags = 7; // UNWF_ERROR
+            return;
     }
 }
 "#;
@@ -75,7 +74,7 @@ pub fn gen<W: Write>(mut w: W, eh_frame: &EhFrame) -> Result<()> {
             }
             let rsp = if row.cfa.is_implemented() {
                 flags.rsp = true;
-                format!("out_ctx.rsp = {};\n", gen_of_reg(row.cfa))
+                format!("out_ctx->rsp = {};\n", gen_of_reg(row.cfa))
             } else {
                 // rsp is required (CFA)
                 flags.error = true;
@@ -83,19 +82,19 @@ pub fn gen<W: Write>(mut w: W, eh_frame: &EhFrame) -> Result<()> {
             };
             let rbp = if row.rbp.is_defined() {
                 flags.rbp = true;
-                format!("out_ctx.rbp = {};\n", gen_of_reg(row.rbp))
+                format!("out_ctx->rbp = {};\n", gen_of_reg(row.rbp))
             } else {
                 Default::default()
             };
             let ra = if row.ra.is_defined() {
                 flags.rip = true;
-                format!("out_ctx.rip = {};\n", gen_of_reg(row.ra))
+                format!("out_ctx->rip = {};\n", gen_of_reg(row.ra))
             } else {
                 Default::default()
             };
             let rbx = if row.rbx.is_defined() {
                 flags.rbx = true;
-                format!("out_ctx.rbx = {};\n", gen_of_reg(row.rbx))
+                format!("out_ctx->rbx = {};\n", gen_of_reg(row.rbx))
             } else {
                 Default::default()
             };
@@ -103,8 +102,8 @@ pub fn gen<W: Write>(mut w: W, eh_frame: &EhFrame) -> Result<()> {
             let case = format!(r#"
         case 0x{:x} ... 0x{:x}:
                {}{}{}{}
-               out_ctx.flags = {}u;
-               return out_ctx;
+               out_ctx->flags = {}u;
+               return;
             "#, start, end, rsp, rbp, ra, rbx, u8::from(flags));
             w.write_all(case.as_bytes())?;
         }
@@ -120,7 +119,7 @@ fn gen_of_reg(reg: Register) -> String {
             format!("ctx.{} + {}", reg, offset)
         }
         Register::CfaOffset(offset) => {
-            format!("deref(out_ctx.rsp + {})", offset)
+            format!("deref(out_ctx->rsp + {})", offset)
         }
         Register::PltExpr => "(((ctx.rip & 15) >= 11) ? 8 : 0) + ctx.rsp".to_string(),
         Register::Unimplemented => unreachable!(),
