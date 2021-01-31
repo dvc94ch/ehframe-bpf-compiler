@@ -54,11 +54,9 @@ impl std::fmt::Display for Register {
 /// A machine register (eg. %rip) among the supported ones (x86_64 only for now).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MachineRegister {
-    Rip,
     Rsp,
     Rbp,
     Rbx,
-    // A bit of cheating: not a machine register.
     Ra,
 }
 
@@ -78,7 +76,6 @@ impl std::fmt::Display for MachineRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         use MachineRegister::*;
         match self {
-            Rip => write!(f, "rip"),
             Rsp => write!(f, "rsp"),
             Rbp => write!(f, "rbp"),
             Rbx => write!(f, "rbx"),
