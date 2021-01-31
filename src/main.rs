@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ehframe_bpf_compiler::EhFrame;
+use ehframe_bpf_compiler::UnwindTable;
 use std::io::Write;
 
 const BIN_PATH: &str = concat!(
@@ -8,14 +8,11 @@ const BIN_PATH: &str = concat!(
 );
 
 fn main() -> Result<()> {
-    let frame = EhFrame::parse(BIN_PATH)?;
-    let mut eh_tables = std::fs::File::create("eh_elf.txt")?;
-    writeln!(&mut eh_tables, "{} unwind tables", frame.tables.len())?;
-    for table in &frame.tables {
-        writeln!(&mut eh_tables, "{}", table)?;
-    }
+    let table = UnwindTable::parse(BIN_PATH)?;
+    let mut eh_table = std::fs::File::create("eh_elf.txt")?;
+    writeln!(&mut eh_table, "{}", table)?;
 
     let mut eh_elf = std::fs::File::create("eh_elf.c")?;
-    ehframe_bpf_compiler::gen(&mut eh_elf, &frame)?;
+    table.gen(&mut eh_elf)?;
     Ok(())
 }

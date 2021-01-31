@@ -1,4 +1,4 @@
-use crate::{EhFrame, Register};
+use crate::{UnwindTable, UnwindTableRow, Register};
 use anyhow::Result;
 use std::io::Write;
 
@@ -28,19 +28,16 @@ typedef unwind_context_t (*_fde_func_with_deref_t)(
     deref_func_t);
 
 void _eh_elf(unwind_context_t ctx, unwind_context_t *out_ctx, uintptr_t pc, deref_func_t deref) {
-    switch(pc) {
 "#;
 
 const POST: &str = r#"
-        default:
-            out_ctx->flags = 7; // UNWF_ERROR
-            return;
-    }
+    out_ctx->flags = 7; // UNWF_ERROR
+    return;
 }
 "#;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Flags {
+pub struct UnwindFlags {
     rip: bool,
     rsp: bool,
     rbp: bool,
@@ -48,8 +45,8 @@ pub struct Flags {
     error: bool,
 }
 
-impl From<Flags> for u8 {
-    fn from(flags: Flags) -> Self {
+impl From<UnwindFlags> for u8 {
+    fn from(flags: UnwindFlags) -> Self {
         ((flags.rip as u8) << 0) |
         ((flags.rsp as u8) << 1) |
         ((flags.rbp as u8) << 2) |
@@ -58,70 +55,86 @@ impl From<Flags> for u8 {
     }
 }
 
-pub fn gen<W: Write>(mut w: W, eh_frame: &EhFrame) -> Result<()> {
-    w.write_all(PRE.as_bytes())?;
-    for table in &eh_frame.tables {
-        let end = table.end_address;
-        let mut iter = table.rows.iter().peekable();
-        while let Some(row) = iter.next() {
-            let start = row.ip;
-            let end = iter.peek().map(|row| row.ip).unwrap_or(end) - 1;
-            let mut flags = Flags::default();
-            if !row.ra.is_implemented() {
-                // RA might be undefined (last frame), but if it is defined and we
-                // don't implement it (eg. EXPR), it is an error.
-                flags.error = true;
-            }
-            let rsp = if row.cfa.is_implemented() {
-                flags.rsp = true;
-                format!("out_ctx->rsp = {};\n", gen_of_reg(row.cfa))
-            } else {
-                // rsp is required (CFA)
-                flags.error = true;
-                Default::default()
-            };
-            let rbp = if row.rbp.is_defined() {
-                flags.rbp = true;
-                format!("out_ctx->rbp = {};\n", gen_of_reg(row.rbp))
-            } else {
-                Default::default()
-            };
-            let ra = if row.ra.is_defined() {
-                flags.rip = true;
-                format!("out_ctx->rip = {};\n", gen_of_reg(row.ra))
-            } else {
-                Default::default()
-            };
-            /*let rbx = if row.rbx.is_defined() {
-                flags.rbx = true;
-                format!("out_ctx->rbx = {};\n", gen_of_reg(row.rbx))
-            } else {
-                Default::default()
-            };*/
-
-            let case = format!(r#"
-        case 0x{:x} ... 0x{:x}:
-               {}{}{}
-               out_ctx->flags = {}u;
-               return;
-            "#, start, end, rsp, rbp, ra, u8::from(flags));
-            w.write_all(case.as_bytes())?;
-        }
+impl UnwindTable {
+    pub fn gen<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_all(PRE.as_bytes())?;
+        gen_rows(w, &self.rows)?;
+        w.write_all(POST.as_bytes())?;
+        Ok(())
     }
-    w.write_all(POST.as_bytes())?;
+}
+
+fn gen_rows<W: Write>(w: &mut W, rows: &[UnwindTableRow]) -> Result<()> {
+    if rows.len() > 1 {
+        let (a, b) = rows.split_at(rows.len() / 2);
+        writeln!(
+            w,
+            "if(0x{:x} <= pc && pc < 0x{:x}) {{",
+            a.first().unwrap().start_address,
+            a.last().unwrap().end_address,
+        )?;
+        gen_rows(w, a)?;
+        writeln!(w, "}} else {{")?;
+        gen_rows(w, b)?;
+        writeln!(w, "}}")?;
+    } else {
+        rows[0].gen(w)?;
+    }
     Ok(())
 }
 
-fn gen_of_reg(reg: Register) -> String {
-    match reg {
-        Register::Undefined => unreachable!(),
-        Register::Register(reg, offset) => {
-            format!("ctx.{} + {}", reg, offset)
+impl UnwindTableRow {
+    pub fn gen<W: Write>(&self, w: &mut W) -> Result<()> {
+        let mut flags = UnwindFlags::default();
+        if !self.ra.is_implemented() {
+            // RA might be undefined (last frame), but if it is defined and we
+            // don't implement it (eg. EXPR), it is an error.
+            flags.error = true;
         }
-        Register::CfaOffset(offset) => {
-            format!("deref(out_ctx->rsp + {})", offset)
+        if self.cfa.is_implemented() {
+            flags.rsp = true;
+            write!(w, "out_ctx->rsp = ")?;
+            self.cfa.gen(w)?;
+            write!(w, ";\n")?;
+        } else {
+            // rsp is required (CFA)
+            flags.error = true;
         }
-        Register::PltExpr => "(((ctx.rip & 15) >= 11) ? 8 : 0) + ctx.rsp".to_string(),
-        Register::Unimplemented => unreachable!(),
+        if self.rbp.is_defined() {
+            flags.rbp = true;
+            write!(w, "out_ctx->rbp = ")?;
+            self.rbp.gen(w)?;
+            write!(w, ";\n")?;
+        }
+        if self.ra.is_defined() {
+            flags.rip = true;
+            write!(w, "out_ctx->rip = ")?;
+            self.ra.gen(w)?;
+            write!(w, ";\n")?;
+        }
+        /*if row.rbx.is_defined() {
+            flags.rbx = true;
+            writeln!(w, "out_ctx->rbx = {};\n", gen_of_reg(row.rbx))?;
+        }*/
+        writeln!(w, "out_ctx->flags = {}u;", u8::from(flags))?;
+        writeln!(w, "return;")?;
+        Ok(())
+    }
+}
+
+impl Register {
+    pub fn gen<W: Write>(&self, w: &mut W) -> Result<()> {
+        match self {
+            Self::CfaOffset(offset) => {
+                write!(w, "deref(out_ctx->rsp + {})", offset)?
+            }
+            Self::Register(reg, offset) => {
+                write!(w, "ctx.{} + {}", reg, offset)?
+            }
+            Self::PltExpr => write!(w, "(((ctx.rip & 15) >= 11) ? 8 : 0) + ctx.rsp")?,
+            Self::Undefined => unreachable!(),
+            Self::Unimplemented => unreachable!(),
+        }
+        Ok(())
     }
 }

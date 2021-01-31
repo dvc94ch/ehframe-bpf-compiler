@@ -87,8 +87,10 @@ impl std::fmt::Display for MachineRegister {
 /// Row of a FDE.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct UnwindTableRow {
-    /// Instruction pointer.
-    pub ip: usize,
+    /// Instruction pointer start range (inclusive).
+    pub start_address: usize,
+    /// Instruction pointer end range (exclusive).
+    pub end_address: usize,
     /// Canonical frame address.
     pub cfa: Register,
     /// Base pointer register.
@@ -105,7 +107,8 @@ impl UnwindTableRow {
         _encoding: gimli::Encoding,
     ) -> Result<Self> {
         Ok(Self {
-            ip: row.start_address() as _,
+            start_address: row.start_address() as _,
+            end_address: row.end_address() as _,
             cfa: match row.cfa() {
                 CfaRule::RegisterAndOffset { register, offset } => {
                     Register::Register((*register).into(), *offset as _)
@@ -138,8 +141,9 @@ impl std::fmt::Display for UnwindTableRow {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "0x{:<6x} {:8} {:8} {:8}",
-            self.ip,
+            "0x{:<6x}-0x{:<6x} {:8} {:8} {:8}",
+            self.start_address,
+            self.end_address,
             self.cfa.to_string(),
             self.rbp.to_string(),
             //self.rbx.to_string(),
@@ -148,39 +152,13 @@ impl std::fmt::Display for UnwindTableRow {
     }
 }
 
-/// Frame description entry.
+/// Unwind table.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct UnwindTable {
-    /// This FDE's start instruction pointer incl.
-    pub start_address: usize,
-    /// This FDE's end instruction pointer excl.
-    pub end_address: usize,
-    /// Dwarf rows for this FDE.
     pub rows: Vec<UnwindTableRow>,
 }
 
-impl std::fmt::Display for UnwindTable {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "0x{:x}-0x{:x}", self.start_address, self.end_address)?;
-        writeln!(
-            f,
-            "{:8} {:8} {:8} {:8}",
-            "ip", "cfa", "rbp", "ra"
-        )?;
-        for row in &self.rows {
-            writeln!(f, "{}", row)?;
-        }
-        Ok(())
-    }
-}
-
-/// EhFrame
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct EhFrame {
-    pub tables: Vec<UnwindTable>,
-}
-
-impl EhFrame {
+impl UnwindTable {
     pub fn parse<T: AsRef<Path>>(path: T) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let file = unsafe { memmap::Mmap::map(&file) }?;
@@ -207,7 +185,7 @@ impl EhFrame {
 
         let mut ctx = UninitializedUnwindContext::new();
         let mut entries = eh_frame.entries(&bases);
-        let mut tables = vec![];
+        let mut rows = vec![];
         while let Some(entry) = entries.next()? {
             match entry {
                 gimli::CieOrFde::Cie(_) => {}
@@ -215,26 +193,27 @@ impl EhFrame {
                     let fde = partial.parse(|_, bases, o| eh_frame.cie_from_offset(bases, o))?;
                     let encoding = fde.cie().encoding();
                     let mut table = fde.rows(&eh_frame, &bases, &mut ctx)?;
-                    let mut rows = vec![];
-                    let mut start_address = None;
-                    let mut end_address = None;
                     while let Some(row) = table.next_row()? {
-                        if start_address.is_none() {
-                            start_address = Some(row.start_address());
-                        }
-                        end_address = Some(row.end_address());
                         rows.push(UnwindTableRow::parse(row, encoding)?);
-                    }
-                    if let (Some(start_address), Some(end_address)) = (start_address, end_address) {
-                        tables.push(UnwindTable {
-                            start_address: start_address as _,
-                            end_address: end_address as _,
-                            rows,
-                        });
                     }
                 }
             }
         }
-        Ok(Self { tables })
+        rows.sort_unstable_by_key(|row| row.start_address);
+        Ok(Self { rows })
+    }
+}
+
+impl std::fmt::Display for UnwindTable {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{:18} {:8} {:8} {:8}",
+            "ip", "cfa", "rbp", "ra"
+        )?;
+        for row in &self.rows {
+            writeln!(f, "{}", row)?;
+        }
+        Ok(())
     }
 }
