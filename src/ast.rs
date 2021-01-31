@@ -56,7 +56,7 @@ impl std::fmt::Display for Register {
 pub enum MachineRegister {
     Rsp,
     Rbp,
-    Rbx,
+    //Rbx,
     Ra,
 }
 
@@ -65,7 +65,7 @@ impl From<gimli::Register> for MachineRegister {
         match reg {
             gimli::X86_64::RSP => Self::Rsp,
             gimli::X86_64::RBP => Self::Rbp,
-            gimli::X86_64::RBX => Self::Rbx,
+            //gimli::X86_64::RBX => Self::Rbx,
             gimli::X86_64::RA => Self::Ra,
             _ => todo!(),
         }
@@ -78,7 +78,7 @@ impl std::fmt::Display for MachineRegister {
         match self {
             Rsp => write!(f, "rsp"),
             Rbp => write!(f, "rbp"),
-            Rbx => write!(f, "rbx"),
+            //Rbx => write!(f, "rbx"),
             Ra => write!(f, "ra"),
         }
     }
@@ -93,8 +93,8 @@ pub struct UnwindTableRow {
     pub cfa: Register,
     /// Base pointer register.
     pub rbp: Register,
-    /// RBX, sometimes used for unwinding.
-    pub rbx: Register,
+    // /// RBX, sometimes used for unwinding.
+    // pub rbx: Register,
     /// Return address.
     pub ra: Register,
 }
@@ -120,11 +120,11 @@ impl UnwindTableRow {
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
                 _ => Register::Unimplemented,
             },
-            rbx: match row.register(gimli::X86_64::RBX) {
+            /*rbx: match row.register(gimli::X86_64::RBX) {
                 RegisterRule::Undefined => Register::Undefined,
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
                 _ => Register::Unimplemented,
-            },
+            },*/
             ra: match row.register(gimli::X86_64::RA) {
                 RegisterRule::Undefined => Register::Undefined,
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
@@ -138,11 +138,11 @@ impl std::fmt::Display for UnwindTableRow {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "0x{:<6x} {:8} {:8} {:8} {:8}",
+            "0x{:<6x} {:8} {:8} {:8}",
             self.ip,
             self.cfa.to_string(),
             self.rbp.to_string(),
-            self.rbx.to_string(),
+            //self.rbx.to_string(),
             self.ra.to_string()
         )
     }
@@ -164,8 +164,8 @@ impl std::fmt::Display for UnwindTable {
         writeln!(f, "0x{:x}-0x{:x}", self.start_address, self.end_address)?;
         writeln!(
             f,
-            "{:8} {:8} {:8} {:8} {:8}",
-            "ip", "cfa", "rbp", "rbx", "ra"
+            "{:8} {:8} {:8} {:8}",
+            "ip", "cfa", "rbp", "ra"
         )?;
         for row in &self.rows {
             writeln!(f, "{}", row)?;

@@ -92,19 +92,19 @@ pub fn gen<W: Write>(mut w: W, eh_frame: &EhFrame) -> Result<()> {
             } else {
                 Default::default()
             };
-            let rbx = if row.rbx.is_defined() {
+            /*let rbx = if row.rbx.is_defined() {
                 flags.rbx = true;
                 format!("out_ctx->rbx = {};\n", gen_of_reg(row.rbx))
             } else {
                 Default::default()
-            };
+            };*/
 
             let case = format!(r#"
         case 0x{:x} ... 0x{:x}:
-               {}{}{}{}
+               {}{}{}
                out_ctx->flags = {}u;
                return;
-            "#, start, end, rsp, rbp, ra, rbx, u8::from(flags));
+            "#, start, end, rsp, rbp, ra, u8::from(flags));
             w.write_all(case.as_bytes())?;
         }
     }
