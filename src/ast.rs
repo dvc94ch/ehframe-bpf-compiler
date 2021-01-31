@@ -23,6 +23,16 @@ pub enum Register {
     Unimplemented,
 }
 
+impl Register {
+    pub fn is_implemented(&self) -> bool {
+        *self != Self::Unimplemented
+    }
+
+    pub fn is_defined(&self) -> bool {
+        self.is_implemented() && *self != Self::Undefined
+    }
+}
+
 impl std::fmt::Display for Register {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
