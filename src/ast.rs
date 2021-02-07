@@ -56,19 +56,22 @@ impl std::fmt::Display for Register {
 pub enum MachineRegister {
     Rsp,
     Rbp,
-    //Rbx,
+    Rbx,
     Ra,
 }
 
-impl From<gimli::Register> for MachineRegister {
-    fn from(reg: gimli::Register) -> Self {
-        match reg {
+impl MachineRegister {
+    pub fn parse(reg: gimli::Register) -> Option<Self> {
+        Some(match reg {
             gimli::X86_64::RSP => Self::Rsp,
             gimli::X86_64::RBP => Self::Rbp,
-            //gimli::X86_64::RBX => Self::Rbx,
+            gimli::X86_64::RBX => Self::Rbx,
             gimli::X86_64::RA => Self::Ra,
-            _ => todo!(),
-        }
+            _ => {
+                println!("unsupported register {:?}", reg);
+                return None;
+            }
+        })
     }
 }
 
@@ -78,7 +81,7 @@ impl std::fmt::Display for MachineRegister {
         match self {
             Rsp => write!(f, "rsp"),
             Rbp => write!(f, "rbp"),
-            //Rbx => write!(f, "rbx"),
+            Rbx => write!(f, "rbx"),
             Ra => write!(f, "ra"),
         }
     }
@@ -95,8 +98,8 @@ pub struct UnwindTableRow {
     pub cfa: Register,
     /// Base pointer register.
     pub rbp: Register,
-    // /// RBX, sometimes used for unwinding.
-    // pub rbx: Register,
+    /// RBX, sometimes used for unwinding.
+    pub rbx: Register,
     /// Return address.
     pub ra: Register,
 }
@@ -111,7 +114,11 @@ impl UnwindTableRow {
             end_address: row.end_address() as _,
             cfa: match row.cfa() {
                 CfaRule::RegisterAndOffset { register, offset } => {
-                    Register::Register((*register).into(), *offset as _)
+                    if let Some(reg) = MachineRegister::parse(*register) {
+                        Register::Register(reg, *offset as _)
+                    } else {
+                        Register::Unimplemented
+                    }
                 }
                 CfaRule::Expression(_expr) => {
                     // TODO check it is always PltExpr
@@ -121,17 +128,26 @@ impl UnwindTableRow {
             rbp: match row.register(gimli::X86_64::RBP) {
                 RegisterRule::Undefined => Register::Undefined,
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
-                _ => Register::Unimplemented,
+                rule => {
+                    println!("Unimplemented {:?}", rule);
+                    Register::Unimplemented
+                }
             },
-            /*rbx: match row.register(gimli::X86_64::RBX) {
+            rbx: match row.register(gimli::X86_64::RBX) {
                 RegisterRule::Undefined => Register::Undefined,
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
-                _ => Register::Unimplemented,
-            },*/
+                rule => {
+                    println!("Unimplemented {:?}", rule);
+                    Register::Unimplemented
+                }
+            },
             ra: match row.register(gimli::X86_64::RA) {
                 RegisterRule::Undefined => Register::Undefined,
                 RegisterRule::Offset(offset) => Register::CfaOffset(offset as _),
-                _ => Register::Unimplemented,
+                rule => {
+                    println!("Unimplemented {:?}", rule);
+                    Register::Unimplemented
+                }
             },
         })
     }
@@ -141,12 +157,12 @@ impl std::fmt::Display for UnwindTableRow {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "0x{:<6x}-0x{:<6x} {:8} {:8} {:8}",
+            "0x{:<6x}-0x{:<6x} {:8} {:8} {:8} {:8}",
             self.start_address,
             self.end_address,
             self.cfa.to_string(),
             self.rbp.to_string(),
-            //self.rbx.to_string(),
+            self.rbx.to_string(),
             self.ra.to_string()
         )
     }
@@ -208,8 +224,8 @@ impl std::fmt::Display for UnwindTable {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(
             f,
-            "{:18} {:8} {:8} {:8}",
-            "ip", "cfa", "rbp", "ra"
+            "{:18} {:8} {:8} {:8} {:8}",
+            "ip", "cfa", "rbp", "rbx", "ra"
         )?;
         for row in &self.rows {
             writeln!(f, "{}", row)?;

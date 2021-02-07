@@ -1,3 +1,6 @@
+[workspace]
+members = ["stack-walker", "."]
+
 [package]
 name = "ehframe-bpf-compiler"
 version = "0.1.0"
@@ -10,3 +13,7 @@ gimli = "0.23.0"
 memmap = "0.7.0"
 object = "0.23.0"
 typed-arena = "2.0.1"
+
+[dev-dependencies]
+backtrace = "0.3.56"
+stack-walker = { path = "stack-walker" }

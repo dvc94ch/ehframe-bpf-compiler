@@ -1,9 +1,8 @@
-use crate::{UnwindTable, UnwindTableRow, Register};
+use crate::{Register, UnwindTable, UnwindTableRow};
 use anyhow::Result;
 use std::io::Write;
 
 const PRE: &str = r#"
-#include <assert.h>
 #include <stdint.h>
 
 typedef enum {
@@ -19,15 +18,7 @@ typedef struct {
     uintptr_t rip, rsp, rbp, rbx;
 } unwind_context_t;
 
-typedef uintptr_t (*deref_func_t)(uintptr_t);
-
-typedef unwind_context_t (*_fde_func_t)(unwind_context_t, uintptr_t);
-typedef unwind_context_t (*_fde_func_with_deref_t)(
-    unwind_context_t,
-    uintptr_t,
-    deref_func_t);
-
-void _eh_elf(unwind_context_t ctx, unwind_context_t *out_ctx, uintptr_t pc, deref_func_t deref) {
+void _eh_elf(unwind_context_t ctx, unwind_context_t *out_ctx, uintptr_t pc) {
 "#;
 
 const POST: &str = r#"
@@ -38,20 +29,20 @@ const POST: &str = r#"
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UnwindFlags {
-    rip: bool,
-    rsp: bool,
-    rbp: bool,
-    rbx: bool,
-    error: bool,
+    pub rip: bool,
+    pub rsp: bool,
+    pub rbp: bool,
+    pub rbx: bool,
+    pub error: bool,
 }
 
 impl From<UnwindFlags> for u8 {
     fn from(flags: UnwindFlags) -> Self {
-        ((flags.rip as u8) << 0) |
-        ((flags.rsp as u8) << 1) |
-        ((flags.rbp as u8) << 2) |
-        ((flags.rbx as u8) << 3) |
-        ((flags.error as u8) << 7)
+        ((flags.rip as u8) << 0)
+            | ((flags.rsp as u8) << 1)
+            | ((flags.rbp as u8) << 2)
+            | ((flags.rbx as u8) << 3)
+            | ((flags.error as u8) << 7)
     }
 }
 
@@ -112,10 +103,12 @@ impl UnwindTableRow {
             self.ra.gen(w)?;
             write!(w, ";\n")?;
         }
-        /*if row.rbx.is_defined() {
+        if self.rbx.is_defined() {
             flags.rbx = true;
-            writeln!(w, "out_ctx->rbx = {};\n", gen_of_reg(row.rbx))?;
-        }*/
+            write!(w, "out_ctx->rbx = ")?;
+            self.rbx.gen(w)?;
+            write!(w, ";\n")?;
+        }
         writeln!(w, "out_ctx->flags = {}u;", u8::from(flags))?;
         writeln!(w, "return;")?;
         Ok(())
@@ -125,12 +118,8 @@ impl UnwindTableRow {
 impl Register {
     pub fn gen<W: Write>(&self, w: &mut W) -> Result<()> {
         match self {
-            Self::CfaOffset(offset) => {
-                write!(w, "deref(out_ctx->rsp + {})", offset)?
-            }
-            Self::Register(reg, offset) => {
-                write!(w, "ctx.{} + {}", reg, offset)?
-            }
+            Self::CfaOffset(offset) => write!(w, "*((uintptr_t*)(out_ctx->rsp + {}))", offset)?,
+            Self::Register(reg, offset) => write!(w, "ctx.{} + {}", reg, offset)?,
             Self::PltExpr => write!(w, "(((ctx.rip & 15) >= 11) ? 8 : 0) + ctx.rsp")?,
             Self::Undefined => unreachable!(),
             Self::Unimplemented => unreachable!(),
